@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SafeSpace camera test</title>
+</head>
+<body style="font-family: sans-serif; text-align: center;">
+  <h2>SafeSpace camera test</h2>
+  <button onclick="startCamera()">Start camera</button>
+  <p id="status"></p>
+  <video id="cam" autoplay playsinline style="width:100%; max-width:480px;"></video>
+  <script>
+    async function startCamera() {
+      const status = document.getElementById('status');
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' }
+        });
+        document.getElementById('cam').srcObject = stream;
+        status.textContent = 'Camera is working';
+      } catch (e) {
+        status.textContent = 'Camera error: ' + e.message;
+      }
+    }
+  </script>
+</body>
+</html>
