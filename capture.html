@@ -13,8 +13,8 @@
 </head>
 <body>
 <h2>SafeSpace Capture</h2>
-<p><b>Step 1:</b> Take a photo</p>
-<input type="file" id="photo" accept="image/*" capture="environment">
+<p><b>Step 1:</b> Choose a photo (camera or gallery)</p>
+<input type="file" id="photo" accept="image/*">
 <pre id="record">No evidence saved yet</pre>
 <button id="dl" style="display:none">Download evidence record</button>
 <hr>
@@ -70,7 +70,7 @@ document.getElementById('verify').addEventListener('change', async e => {
   const f = e.target.files[0];
   const out = document.getElementById('result');
   if (!f) return;
-  if (!record) { out.textContent = 'Take a photo first (Step 1)'; return; }
+  if (!record) { out.textContent = 'Choose a photo in Step 1 first'; return; }
   const hash = await sha256(f);
   out.textContent = hash === record.sha256
     ? '✅ MATCH: file is unchanged'
