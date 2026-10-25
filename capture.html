@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SafeSpace Capture</title>
+<style>
+  body { font-family: sans-serif; padding: 14px; max-width: 480px; margin: auto; }
+  button, input { font-size: 16px; margin: 6px 0; }
+  pre { background: #f2f2f2; padding: 10px; white-space: pre-wrap; word-break: break-all; }
+  #result { font-weight: bold; }
+</style>
+</head>
+<body>
+<h2>SafeSpace Capture</h2>
+<p><b>Step 1:</b> Take a photo</p>
+<input type="file" id="photo" accept="image/*" capture="environment">
+<pre id="record">No evidence saved yet</pre>
+<button id="dl" style="display:none">Download evidence record</button>
+<hr>
+<p><b>Step 2:</b> Check a file against the saved fingerprint</p>
+<input type="file" id="verify">
+<p id="result"></p>
+
+<script>
+let record = null;
+
+async function sha256(file) {
+  const buf = await file.arrayBuffer();
+  const h = await crypto.subtle.digest('SHA-256', buf);
+  return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function getLocation() {
+  return new Promise(res => {
+    if (!navigator.geolocation) return res('Location not available');
+    navigator.geolocation.getCurrentPosition(
+      p => res(p.coords.latitude.toFixed(5) + ', ' + p.coords.longitude.toFixed(5)),
+      () => res('Location not allowed'),
+      { timeout: 8000 });
+  });
+}
+
+document.getElementById('photo').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  document.getElementById('record').textContent = 'Working...';
+  const hash = await sha256(f);
+  const loc = await getLocation();
+  record = {
+    file: f.name,
+    size_bytes: f.size,
+    captured_at: new Date().toISOString(),
+    location: loc,
+    sha256: hash
+  };
+  document.getElementById('record').textContent = JSON.stringify(record, null, 2);
+  document.getElementById('dl').style.display = 'inline-block';
+});
+
+document.getElementById('dl').onclick = () => {
+  const blob = new Blob([JSON.stringify(record, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'evidence-record.json';
+  a.click();
+};
+
+document.getElementById('verify').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  const out = document.getElementById('result');
+  if (!f) return;
+  if (!record) { out.textContent = 'Take a photo first (Step 1)'; return; }
+  const hash = await sha256(f);
+  out.textContent = hash === record.sha256
+    ? '✅ MATCH: file is unchanged'
+    : '❌ MISMATCH: file was changed or is a different file';
+});
+</script>
+</body>
+</html>
