@@ -1,28 +1,100 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SafeSpace camera test</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SafeSpace Scan</title>
+<style>
+  body { font-family: sans-serif; text-align: center; margin: 0; padding: 12px; }
+  #wrap { position: relative; display: inline-block; width: 100%; max-width: 480px; }
+  video { width: 100%; display: block; }
+  #overlay { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+  button { font-size: 16px; padding: 10px 18px; margin: 8px; }
+</style>
 </head>
-<body style="font-family: sans-serif; text-align: center;">
-  <h2>SafeSpace camera test</h2>
-  <button onclick="startCamera()">Start camera</button>
-  <p id="status"></p>
-  <video id="cam" autoplay playsinline style="width:100%; max-width:480px;"></video>
-  <script>
-    async function startCamera() {
-      const status = document.getElementById('status');
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment' }
-        });
-        document.getElementById('cam').srcObject = stream;
-        status.textContent = 'Camera is working';
-      } catch (e) {
-        status.textContent = 'Camera error: ' + e.message;
+<body>
+<h2>SafeSpace Scan</h2>
+<button onclick="startCamera()">Start scan</button>
+<div id="wrap">
+  <video id="cam" autoplay playsinline muted></video>
+  <canvas id="overlay"></canvas>
+</div>
+<p id="status">Press Start scan</p>
+<label>Sensitivity: <input id="thr" type="range" min="200" max="255" value="240"></label>
+<canvas id="work" style="display:none"></canvas>
+
+<script>
+const video = document.getElementById('cam');
+const overlay = document.getElementById('overlay');
+const work = document.getElementById('work');
+const status = document.getElementById('status');
+const W = 160, H = 120;
+work.width = W; work.height = H;
+const wctx = work.getContext('2d', { willReadFrequently: true });
+const octx = overlay.getContext('2d');
+
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    video.srcObject = stream;
+    await video.play();
+    requestAnimationFrame(scan);
+  } catch (e) {
+    status.textContent = 'Camera error: ' + e.message;
+  }
+}
+
+function scan() {
+  if (video.videoWidth) {
+    overlay.width = video.videoWidth;
+    overlay.height = video.videoHeight;
+    wctx.drawImage(video, 0, 0, W, H);
+    const d = wctx.getImageData(0, 0, W, H).data;
+    const thr = Number(document.getElementById('thr').value);
+    const bright = new Uint8Array(W * H);
+    const seen = new Uint8Array(W * H);
+    for (let i = 0; i < W * H; i++) {
+      bright[i] = (0.299 * d[i*4] + 0.587 * d[i*4+1] + 0.114 * d[i*4+2]) > thr ? 1 : 0;
+    }
+    octx.clearRect(0, 0, overlay.width, overlay.height);
+    octx.strokeStyle = 'red';
+    octx.lineWidth = 3;
+    const sx = overlay.width / W, sy = overlay.height / H;
+    let found = 0;
+    for (let i = 0; i < W * H; i++) {
+      if (!bright[i] || seen[i]) continue;
+      const stack = [i];
+      seen[i] = 1;
+      let n = 0, minX = W, maxX = 0, minY = H, maxY = 0;
+      while (stack.length) {
+        const p = stack.pop();
+        n++;
+        const x = p % W, y = (p - x) / W;
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+        for (const q of [p - 1, p + 1, p - W, p + W]) {
+          if (q >= 0 && q < W * H && bright[q] && !seen[q] && Math.abs((q % W) - x) <= 1) {
+            seen[q] = 1;
+            stack.push(q);
+          }
+        }
+      }
+      const bw = maxX - minX + 1, bh = maxY - minY + 1;
+      const roundish = Math.abs(bw - bh) <= Math.max(bw, bh) * 0.5;
+      if (n >= 2 && n <= 60 && roundish) {
+        found++;
+        const cx = ((minX + maxX + 1) / 2) * sx, cy = ((minY + maxY + 1) / 2) * sy;
+        octx.beginPath();
+        octx.arc(cx, cy, Math.max(bw, bh) * sx + 12, 0, Math.PI * 2);
+        octx.stroke();
       }
     }
-  </script>
+    status.textContent = found
+      ? 'Possible lens spots: ' + found + ' (please check by eye)'
+      : 'Nothing suspicious seen';
+  }
+  requestAnimationFrame(scan);
+}
+</script>
 </body>
 </html>
