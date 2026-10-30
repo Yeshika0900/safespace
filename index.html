@@ -15,13 +15,15 @@
 </head>
 <body>
 <h2>SafeSpace Scan</h2>
-<p class="tip">Dim the room, then sweep slowly with your phone torch on.</p>
-<button onclick="startCamera()">Start scan</button>
+<p class="tip">If your phone has a torch, turn it on and sweep slowly. Browser camera access to the torch varies by device.</p>
+<p class="tip"><b>This scan only flags bright spots in the camera image. It cannot detect or rule out hidden cameras.</b> Use it as one clue, and check anything concerning in person if it is safe to do so.</p>
+<button id="start">Start scan</button>
+<button id="stop" disabled>Stop scan</button>
 <div id="wrap">
   <video id="cam" autoplay playsinline muted></video>
   <canvas id="overlay"></canvas>
 </div>
-<p id="status">Press Start scan</p>
+<p id="status" role="status" aria-live="polite">Press Start scan</p>
 <label>Sensitivity: <input id="thr" type="range" min="200" max="255" value="248"></label>
 <canvas id="work" style="display:none"></canvas>
 
@@ -37,16 +39,44 @@ work.width = W; work.height = H;
 const wctx = work.getContext('2d', { willReadFrequently: true });
 const octx = overlay.getContext('2d');
 let hits = {};
+let stream = null;
+let scanning = false;
+let frameRequest = null;
+
+document.getElementById('start').addEventListener('click', startCamera);
+document.getElementById('stop').addEventListener('click', stopCamera);
 
 async function startCamera() {
+  if (scanning) return;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error('Camera access requires a supported browser and a secure (HTTPS) page.');
+    }
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
     video.srcObject = stream;
     await video.play();
-    requestAnimationFrame(scan);
+    scanning = true;
+    document.getElementById('start').disabled = true;
+    document.getElementById('stop').disabled = false;
+    status.textContent = 'Scanning for bright spots only. This result cannot establish whether a camera is present.';
+    frameRequest = requestAnimationFrame(scan);
   } catch (e) {
-    status.textContent = 'Camera error: ' + e.message;
+    status.textContent = 'Could not start the camera: ' + e.message + ' Check browser permission and use HTTPS.';
+    stopCamera();
   }
+}
+
+function stopCamera() {
+  scanning = false;
+  if (frameRequest !== null) cancelAnimationFrame(frameRequest);
+  frameRequest = null;
+  if (stream) stream.getTracks().forEach(track => track.stop());
+  stream = null;
+  video.srcObject = null;
+  hits = {};
+  document.getElementById('start').disabled = false;
+  document.getElementById('stop').disabled = true;
+  if (status.textContent.startsWith('Scanning')) status.textContent = 'Scan stopped. This scan cannot rule out hidden cameras.';
 }
 
 function carry(gx, gy) {
@@ -59,8 +89,10 @@ function carry(gx, gy) {
 
 function scan() {
   if (video.videoWidth) {
-    overlay.width = video.videoWidth;
-    overlay.height = video.videoHeight;
+    if (overlay.width !== video.videoWidth || overlay.height !== video.videoHeight) {
+      overlay.width = video.videoWidth;
+      overlay.height = video.videoHeight;
+    }
     wctx.drawImage(video, 0, 0, W, H);
     const d = wctx.getImageData(0, 0, W, H).data;
     const thr = Number(document.getElementById('thr').value);
@@ -133,11 +165,12 @@ function scan() {
     }
     hits = newHits;
     status.textContent = found
-      ? 'Possible lens spots: ' + found + ' (please check by eye)'
-      : 'Nothing suspicious seen';
+      ? 'Possible bright spots: ' + found + '. This is not camera detection; check these areas by eye if safe.'
+      : 'No bright spot flagged in this frame. This scan cannot rule out a hidden camera.';
   }
-  requestAnimationFrame(scan);
+  if (scanning) frameRequest = requestAnimationFrame(scan);
 }
 </script>
+<p><a href="home.html">Home</a></p>
 </body>
 </html>

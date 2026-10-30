@@ -16,18 +16,22 @@
   .h { font-size: 12px; color: #555; word-break: break-all; margin-top: 4px; }
   pre { background: #f4f4f4; padding: 10px; white-space: pre-wrap; word-break: break-all; font-size: 12px; }
   .warn { background: #fff4f7; border: 1px solid #c8325f; padding: 10px; border-radius: 10px; font-size: 14px; }
+  .progress { font-weight: bold; }
+  .preview { display: block; max-width: 100%; max-height: 220px; margin-top: 8px; }
+  .photo-note { font-size: 12px; color: #555; }
 </style>
 </head>
 <body>
 <h2>Changing Room Mode</h2>
-<div class="warn">If anything feels wrong, do not change clothes here. Tell the staff or manager, and call 112 or 1091 if you feel unsafe.
+<div class="warn">If anything feels wrong, do not change clothes here. Tell the staff or manager, and call <a href="https://112.gov.in/" target="_blank" rel="noopener noreferrer">112 for emergency services</a> or <a href="https://wcd.gov.in/women/help" target="_blank" rel="noopener noreferrer">181 for the Women’s Helpline</a> if appropriate.
 This is a guided check, not a guarantee.</div>
-<p>Go through each area. Take or choose a photo, then mark it <b>Looks normal</b> or <b>Suspicious</b>.</p>
+<p>Go through each area. Photos stay in this browser; they are not uploaded or embedded in the downloaded JSON record. Download each photo separately if you want to keep it with the record.</p>
+<p class="progress" id="progress" role="status" aria-live="polite">0 of 7 areas checked</p>
 
 <div id="list"></div>
 <button class="main" id="finish">Finish and create record</button>
 <pre id="record">No record yet</pre>
-<button id="dl" style="display:none">Download record (use it on the Report page)</button>
+<button id="dl" style="display:none">Download inspection JSON</button>
 <p><a href="report.html">Go to Report page</a> &nbsp; <a href="home.html">Home</a></p>
 
 <script>
@@ -41,12 +45,19 @@ const areas = [
   ['Vents and lights', 'Check vents, bulbs and anything with a small dark dot.']
 ];
 const state = areas.map(a => ({ area: a[0], status: 'not checked', photo: null, photo_sha256: null }));
+const photoFiles = Array(areas.length).fill(null);
+const photoUrls = Array(areas.length).fill(null);
 let record = null;
+
+function updateProgress() {
+  const checked = state.filter(s => s.status !== 'not checked').length;
+  document.getElementById('progress').textContent = checked + ' of ' + state.length + ' areas checked';
+}
 
 const list = document.getElementById('list');
 list.innerHTML = areas.map((a, i) =>
   '<div class="card"><b>' + (i + 1) + '. ' + a[0] + '</b><p>' + a[1] + '</p>' +
-  (a[2] ? '' : '<input type="file" accept="image/*" class="ph" data-i="' + i + '"><div class="h" id="h' + i + '"></div>') +
+  (a[2] ? '' : '<input type="file" accept="image/*" class="ph" data-i="' + i + '"><div class="h" id="h' + i + '"></div><img class="preview" id="preview' + i + '" alt="Local preview for ' + a[0] + '" hidden><button class="photo-download" id="photoDownload' + i + '" data-i="' + i + '" hidden>Download this photo</button>') +
   '<button class="st" data-i="' + i + '" data-s="normal">Looks normal</button>' +
   '<button class="st sus" data-i="' + i + '" data-s="suspicious">Suspicious</button>' +
   ' <span id="s' + i + '"></span></div>'
@@ -70,10 +81,21 @@ document.addEventListener('change', async e => {
   const i = Number(e.target.dataset.i);
   const f = e.target.files[0];
   if (!f) return;
-  const hash = await sha256Buf(await f.arrayBuffer());
-  state[i].photo = f.name;
-  state[i].photo_sha256 = hash;
-  document.getElementById('h' + i).textContent = 'Fingerprint: ' + hash.slice(0, 16) + '...';
+  try {
+    const hash = await sha256Buf(await f.arrayBuffer());
+    state[i].photo = f.name;
+    state[i].photo_sha256 = hash;
+    photoFiles[i] = f;
+    if (photoUrls[i]) URL.revokeObjectURL(photoUrls[i]);
+    photoUrls[i] = URL.createObjectURL(f);
+    const preview = document.getElementById('preview' + i);
+    preview.src = photoUrls[i];
+    preview.hidden = false;
+    document.getElementById('photoDownload' + i).hidden = false;
+    document.getElementById('h' + i).textContent = 'Selected photo: ' + f.name + '. Fingerprint: ' + hash.slice(0, 16) + '...';
+  } catch (err) {
+    document.getElementById('h' + i).textContent = 'Could not fingerprint this file: ' + err.message;
+  }
 });
 
 document.addEventListener('click', e => {
@@ -84,6 +106,18 @@ document.addEventListener('click', e => {
   const el = document.getElementById('s' + i);
   el.textContent = s === 'normal' ? 'Marked normal' : 'Marked suspicious';
   el.className = s === 'normal' ? 'ok' : 'bad';
+  updateProgress();
+});
+
+document.addEventListener('click', e => {
+  if (!e.target.classList.contains('photo-download')) return;
+  const f = photoFiles[Number(e.target.dataset.i)];
+  if (!f) return;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(f);
+  a.download = f.name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 });
 
 document.getElementById('finish').onclick = async () => {
@@ -93,20 +127,24 @@ document.getElementById('finish').onclick = async () => {
   const when = new Date().toISOString();
   const checked = state.filter(s => s.status !== 'not checked').length;
   const sus = state.filter(s => s.status === 'suspicious').map(s => s.area);
-  const body = { room: 'Changing room', captured_at: when, location: loc, items: state };
+  const body = { room: 'Changing room', recorded_at: when, device_location: loc, items: state };
   const sha = await sha256Buf(new TextEncoder().encode(JSON.stringify(body)));
   record = {
+    schema: 'safespace-inspection-v1',
     file: 'Changing room inspection (' + checked + ' of ' + state.length + ' areas checked; suspicious: ' + (sus.length ? sus.join(', ') : 'none') + ')',
-    captured_at: when,
-    location: loc,
+    recorded_at: when,
+    device_location: loc,
     sha256: sha,
-    items: state
+    items: state,
+    note: 'This is a user-created checklist record. Photos are separate files. The timestamp and optional location come from this device, and the hash does not prove when, where, or by whom this record was created.'
   };
-  out.textContent = JSON.stringify(record, null, 2);
+  const unchecked = state.filter(s => s.status === 'not checked').map(s => s.area);
+  out.textContent = JSON.stringify(record, null, 2) + (unchecked.length ? '\n\nIncomplete areas: ' + unchecked.join(', ') : '\n\nAll checklist areas were marked.');
   document.getElementById('dl').style.display = 'inline-block';
 };
 
 document.getElementById('dl').onclick = () => {
+  if (!record) return;
   const blob = new Blob([JSON.stringify(record, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);

@@ -9,21 +9,30 @@
   button, input { font-size: 16px; margin: 6px 0; }
   pre { background: #f2f2f2; padding: 10px; white-space: pre-wrap; word-break: break-all; }
   #result { font-weight: bold; }
+  .note { background: #fff7e6; padding: 10px; line-height: 1.45; }
+  img { display: block; max-width: 100%; max-height: 360px; margin: 8px 0; }
 </style>
 </head>
 <body>
 <h2>SafeSpace Capture</h2>
-<p><b>Step 1:</b> Choose a photo (camera or gallery)</p>
+<p class="note"><b>Privacy:</b> Your selected photo is processed in this browser and is not uploaded. The JSON record does not contain the photo; download both files and keep them together. The device time and optional location are user-device metadata, not independent proof of when or where a photo was taken.</p>
+<p><b>Step 1:</b> Choose the original photo (camera or gallery)</p>
 <input type="file" id="photo" accept="image/*">
+<img id="preview" alt="Preview of the selected photo" hidden>
 <pre id="record">No evidence saved yet</pre>
-<button id="dl" style="display:none">Download evidence record</button>
+<button id="dlRecord" style="display:none">Download JSON record</button>
+<button id="dlPhoto" style="display:none">Download original photo</button>
 <hr>
-<p><b>Step 2:</b> Check a file against the saved fingerprint</p>
-<input type="file" id="verify">
-<p id="result"></p>
+<p><b>Step 2:</b> Load a saved JSON record (optional)</p>
+<input type="file" id="savedRecord" accept=".json,application/json">
+<p><b>Step 3:</b> Check a photo against the record’s fingerprint</p>
+<input type="file" id="verify" accept="image/*">
+<p id="result" role="status" aria-live="polite"></p>
+<p><a href="home.html">Home</a></p>
 
 <script>
 let record = null;
+let photoFile = null;
 
 async function sha256(file) {
   const buf = await file.arrayBuffer();
@@ -44,37 +53,81 @@ function getLocation() {
 document.getElementById('photo').addEventListener('change', async e => {
   const f = e.target.files[0];
   if (!f) return;
+  photoFile = f;
   document.getElementById('record').textContent = 'Working...';
-  const hash = await sha256(f);
-  const loc = await getLocation();
-  record = {
-    file: f.name,
-    size_bytes: f.size,
-    captured_at: new Date().toISOString(),
-    location: loc,
-    sha256: hash
-  };
-  document.getElementById('record').textContent = JSON.stringify(record, null, 2);
-  document.getElementById('dl').style.display = 'inline-block';
+  try {
+    const hash = await sha256(f);
+    const loc = await getLocation();
+    record = {
+      schema: 'safespace-evidence-v1',
+      file: f.name,
+      size_bytes: f.size,
+      recorded_at: new Date().toISOString(),
+      device_location: loc,
+      sha256: hash,
+      note: 'Fingerprint of the selected file only. This record does not prove capture time, location, authorship, or that the JSON itself is unchanged.'
+    };
+    document.getElementById('record').textContent = JSON.stringify(record, null, 2);
+    const preview = document.getElementById('preview');
+    preview.src = URL.createObjectURL(f);
+    preview.hidden = false;
+    document.getElementById('dlRecord').style.display = 'inline-block';
+    document.getElementById('dlPhoto').style.display = 'inline-block';
+    document.getElementById('result').textContent = '';
+  } catch (err) {
+    record = null;
+    document.getElementById('record').textContent = 'Could not create a fingerprint: ' + err.message;
+  }
 });
 
-document.getElementById('dl').onclick = () => {
-  const blob = new Blob([JSON.stringify(record, null, 2)], { type: 'application/json' });
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'evidence-record.json';
+  a.href = url;
+  a.download = filename;
   a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+document.getElementById('dlRecord').onclick = () => {
+  if (!record) return;
+  const blob = new Blob([JSON.stringify(record, null, 2)], { type: 'application/json' });
+  downloadBlob(blob, 'evidence-record.json');
 };
+
+document.getElementById('dlPhoto').onclick = () => {
+  if (photoFile) downloadBlob(photoFile, photoFile.name);
+};
+
+document.getElementById('savedRecord').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  try {
+    const saved = JSON.parse(await f.text());
+    if (!/^[a-f0-9]{64}$/i.test(saved.sha256 || '') || !Number.isFinite(saved.size_bytes)) {
+      throw new Error('This JSON does not contain a recognizable photo fingerprint.');
+    }
+    record = saved;
+    photoFile = null;
+    document.getElementById('record').textContent = JSON.stringify(record, null, 2);
+    document.getElementById('dlRecord').style.display = 'none';
+    document.getElementById('dlPhoto').style.display = 'none';
+    document.getElementById('result').textContent = 'Record loaded. Choose the original photo below to compare its fingerprint.';
+  } catch (err) {
+    record = null;
+    document.getElementById('result').textContent = 'Could not load that evidence record: ' + err.message;
+  }
+});
 
 document.getElementById('verify').addEventListener('change', async e => {
   const f = e.target.files[0];
   const out = document.getElementById('result');
   if (!f) return;
-  if (!record) { out.textContent = 'Choose a photo in Step 1 first'; return; }
+  if (!record) { out.textContent = 'Choose a photo above or load a saved JSON record first.'; return; }
   const hash = await sha256(f);
   out.textContent = hash === record.sha256
-    ? '✅ MATCH: file is unchanged'
-    : '❌ MISMATCH: file was changed or is a different file';
+    ? '✅ MATCH: this file has the same SHA-256 fingerprint as the record. This does not verify when or where it was captured.'
+    : '❌ MISMATCH: this file differs from the one represented by the record, or a different file was selected.';
 });
 </script>
 </body>
