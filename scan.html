@@ -17,8 +17,8 @@
 </head>
 <body>
 <h2>SafeSpace Scan</h2>
-<p class="tip">Turn on the torch if this phone supports it, then pause briefly while scanning surfaces from different angles. A reflection is only a clue, not proof.</p>
-<p class="tip"><b>This scan only flags bright spots in the camera image. It cannot detect or rule out hidden cameras.</b> Use it as one clue, and check anything concerning in person if it is safe to do so.</p>
+<p class="tip">Turn on the torch if this phone supports it. Move slowly, pause on small spots, then shift your angle and scan again.</p>
+<p class="tip"><b>The scanner looks for small, round, bright reflections that stay visible across frames.</b> It can flag lens-like candidates, but ordinary objects can create the same pattern and hidden cameras can be missed.</p>
 <button id="start">Start scan</button>
 <button id="stop" disabled>Stop scan</button>
 <button id="torch" type="button" disabled>Torch unavailable</button>
@@ -29,8 +29,8 @@
   <canvas id="overlay"></canvas>
 </div>
 <p id="status" role="status" aria-live="polite">Press Start scan</p>
-<label>Bright-spot sensitivity: <input id="thr" type="range" min="200" max="255" value="248"></label>
-<p class="tip">Move the slider left to flag dimmer spots; this may also create more false alarms.</p>
+<label>Reflection sensitivity: <input id="thr" type="range" min="165" max="250" value="225"></label>
+<p class="tip">Move the slider left to flag dimmer reflections. This may also flag more ordinary shiny objects.</p>
 <p><button id="continue" type="button" disabled>Record my observation and continue to Capture</button></p>
 <p><button id="trackerAlert" type="button">I received a tracker alert on my phone</button></p>
 <aside class="tip"><b>Wi-Fi and Bluetooth tracker checks</b><br>This web demo does not scan Wi-Fi devices or identify Bluetooth trackers. Use your phone’s built-in tracker safety tools if you receive an alert; this page cannot confirm that a device is safe.</aside>
@@ -42,8 +42,7 @@ const video = document.getElementById('cam');
 const overlay = document.getElementById('overlay');
 const work = document.getElementById('work');
 const status = document.getElementById('status');
-const W = 160, H = 120;
-const RING_MAX = 120;   // surroundings must be darker than this
+const W = 200, H = 150;
 const MIN_FRAMES = 4;   // spot must persist this many frames
 work.width = W; work.height = H;
 const wctx = work.getContext('2d', { willReadFrequently: true });
@@ -65,7 +64,7 @@ document.getElementById('continue').addEventListener('click', () => {
     type: 'possible_camera',
     recorded_at: new Date().toISOString(),
     observation: lastScanObservation || status.textContent,
-    note: 'User chose to carry this camera scan status into Capture. Bright-spot scan only; not camera detection.'
+    note: 'User chose to carry this camera scan result into Capture. Lens-like reflection candidate only; a hidden camera is not confirmed.'
   }));
   stopCamera();
   window.location.href = 'capture.html';
@@ -193,10 +192,11 @@ function scan() {
       if (lum[i] <= thr || seen[i]) continue;
       const stack = [i];
       seen[i] = 1;
-      let n = 0, minX = W, maxX = 0, minY = H, maxY = 0, peak = 0;
+      let n = 0, minX = W, maxX = 0, minY = H, maxY = 0, peak = 0, sumLum = 0;
       while (stack.length) {
         const p = stack.pop();
         n++;
+        sumLum += lum[p];
         const x = p % W, y = (p - x) / W;
         if (x < minX) minX = x; if (x > maxX) maxX = x;
         if (y < minY) minY = y; if (y > maxY) maxY = y;
@@ -211,26 +211,33 @@ function scan() {
         }
       }
       const bw = maxX - minX + 1, bh = maxY - minY + 1;
-      const roundish = Math.abs(bw - bh) <= Math.max(bw, bh) * 0.5;
-      const filled = n / (bw * bh) > 0.5;
-      if (n < 3 || n > 40 || !roundish || !filled) continue;
+      const aspect = Math.min(bw, bh) / Math.max(bw, bh);
+      const fill = n / (bw * bh);
+      if (n < 3 || n > 72 || aspect < 0.48 || fill < 0.38) continue;
 
-      // check the surroundings are dark
+      // Compare a bright component with its local surroundings.
       let sum = 0, cnt = 0;
-      const x0 = Math.max(0, minX - 4), x1 = Math.min(W - 1, maxX + 4);
-      const y0 = Math.max(0, minY - 4), y1 = Math.min(H - 1, maxY + 4);
+      const pad = Math.max(3, Math.ceil(Math.max(bw, bh) * 0.8));
+      const x0 = Math.max(0, minX - pad), x1 = Math.min(W - 1, maxX + pad);
+      const y0 = Math.max(0, minY - pad), y1 = Math.min(H - 1, maxY + pad);
       for (let x = x0; x <= x1; x++) {
         sum += lum[y0 * W + x] + lum[y1 * W + x]; cnt += 2;
       }
       for (let y = y0; y <= y1; y++) {
         sum += lum[y * W + x0] + lum[y * W + x1]; cnt += 2;
       }
-      if (sum / cnt > RING_MAX) continue;
+      const ringMean = sum / cnt;
+      const meanLum = sumLum / n;
+      const localContrast = meanLum - ringMean;
+      if (localContrast < 28 || peak - ringMean < 55) continue;
 
-      cands.push({ cx: (minX + maxX + 1) / 2, cy: (minY + maxY + 1) / 2, r: Math.max(bw, bh) / 2, peak });
+      const shapeScore = (aspect * 0.55 + Math.min(fill, 1) * 0.45) * 100;
+      const contrastScore = Math.min(100, localContrast * 1.1);
+      const score = Math.round(shapeScore * 0.55 + contrastScore * 0.45);
+      cands.push({ cx: (minX + maxX + 1) / 2, cy: (minY + maxY + 1) / 2, r: Math.max(bw, bh) / 2, peak, score });
     }
 
-    cands.sort((a, b) => b.peak - a.peak);
+    cands.sort((a, b) => b.score - a.score);
     const top = cands.slice(0, 3);
     const newHits = {};
     octx.clearRect(0, 0, overlay.width, overlay.height);
@@ -251,8 +258,10 @@ function scan() {
     }
     hits = newHits;
     status.textContent = found
-      ? 'Possible bright spots: ' + found + '. This is not camera detection; check these areas by eye if safe.'
-      : 'No bright spot flagged in this frame. This scan cannot rule out a hidden camera.';
+      ? 'Possible lens-like reflection candidate' + (found > 1 ? 's' : '') + ': ' + found + '. This is a visual candidate, not a confirmed camera.'
+      : cands.length
+        ? 'Bright reflection seen, but it did not stay stable long enough to flag. Pause briefly and scan again.'
+        : 'No lens-like reflection candidate in this frame. That does not rule out a hidden camera.';
     lastScanObservation = status.textContent;
   }
   if (scanning) frameRequest = requestAnimationFrame(scan);

@@ -18,7 +18,7 @@ Use fictional information and sample images for a public demo. Location is optio
 
 ## Limits and privacy
 
-- The scan flags a narrow pattern of bright spots in a camera image. It cannot identify hidden cameras and cannot establish that a room is safe.
+- The scan flags small, round, high-contrast reflections that persist across frames as possible lens-like candidates. It can miss cameras and flag ordinary shiny objects; it does not establish that a room is safe.
 - Wi-Fi device scanning and Bluetooth tracker detection are not implemented in this web prototype. The tracker-alert path records what the user says their phone reported; it is not a detector.
 - Photos are processed locally by the browser and are not uploaded by this static prototype. The JSON record does not contain the photo; keep the original photo separately.
 - A SHA-256 hash can detect whether a selected file differs from the file represented by a record. It does not establish authorship, time, location, or that the JSON record itself is authentic.
