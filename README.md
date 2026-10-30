@@ -4,11 +4,11 @@ SafeSpace is a small, browser-only prototype for people who feel concerned about
 
 ## Open the project
 
-This is a static site with no build step or backend. Open `index.html` in a browser, or serve this folder from a local static web server. Camera access generally requires HTTPS or localhost; browser and device permissions apply. The camera torch is not controlled by the app.
+This is a static site with no build step or backend. Open `index.html` in a browser, or serve this folder from a local static web server. Camera access generally requires HTTPS or localhost; browser and device permissions apply. The scan controls the torch only when the browser and camera expose that capability; otherwise turn the phone flashlight on manually if available.
 
 ## Demo flow
 
-1. Open `index.html` and choose **Scan**. Allow camera access, try **Start scan** and **Stop scan**, then choose to carry your observation into Capture.
+1. Open `index.html` and choose **Camera scan**. Allow camera access, turn the torch on if the browser offers the control, then scan slowly and pause on surfaces from different angles. Save a frame if useful, stop, and carry your observation into Capture.
 2. To demonstrate a tracker alert flow, choose **I received a tracker alert on my phone**. This records your report of an OS alert; SafeSpace does not scan or verify a tracker.
 3. On **Capture**, review the carried note, add an observation, select a sample photo, create a record, then download the JSON and original photo separately.
 4. Open **Report draft**, select English or Hindi, fill in a fictional incident, optionally attach the JSON record, then review, copy, print, or search Maps for a police station near the place you entered.
@@ -30,7 +30,7 @@ Use fictional information and sample images for a public demo. Location is optio
 
 - `index.html` — project landing page
 - `home.html` — legacy link that redirects to the landing page
-- `scan.html` — camera bright-spot demo and user-reported tracker-alert handoff
+- `scan.html` — torch-assisted bright-spot demo when supported, saved scan frame, and user-reported tracker-alert handoff
 - `changing.html` — guided room checklist
 - `capture.html` — photo fingerprint and evidence JSON
 - `report.html` — editable complaint draft and print view

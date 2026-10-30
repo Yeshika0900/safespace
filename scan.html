@@ -17,16 +17,20 @@
 </head>
 <body>
 <h2>SafeSpace Scan</h2>
-<p class="tip">If your phone has a torch, turn it on and sweep slowly. Browser camera access to the torch varies by device.</p>
+<p class="tip">Turn on the torch if this phone supports it, then pause briefly while scanning surfaces from different angles. A reflection is only a clue, not proof.</p>
 <p class="tip"><b>This scan only flags bright spots in the camera image. It cannot detect or rule out hidden cameras.</b> Use it as one clue, and check anything concerning in person if it is safe to do so.</p>
 <button id="start">Start scan</button>
 <button id="stop" disabled>Stop scan</button>
+<button id="torch" type="button" disabled>Torch unavailable</button>
+<span id="torchStatus" role="status" aria-live="polite">Torch capability not checked yet.</span>
+<button id="saveFrame" type="button" disabled>Save current frame</button>
 <div id="wrap">
   <video id="cam" autoplay playsinline muted></video>
   <canvas id="overlay"></canvas>
 </div>
 <p id="status" role="status" aria-live="polite">Press Start scan</p>
-<label>Sensitivity: <input id="thr" type="range" min="200" max="255" value="248"></label>
+<label>Bright-spot sensitivity: <input id="thr" type="range" min="200" max="255" value="248"></label>
+<p class="tip">Move the slider left to flag dimmer spots; this may also create more false alarms.</p>
 <p><button id="continue" type="button" disabled>Record my observation and continue to Capture</button></p>
 <p><button id="trackerAlert" type="button">I received a tracker alert on my phone</button></p>
 <aside class="tip"><b>Wi-Fi and Bluetooth tracker checks</b><br>This web demo does not scan Wi-Fi devices or identify Bluetooth trackers. Use your phone’s built-in tracker safety tools if you receive an alert; this page cannot confirm that a device is safe.</aside>
@@ -48,14 +52,19 @@ let hits = {};
 let stream = null;
 let scanning = false;
 let frameRequest = null;
+let cameraTrack = null;
+let torchOn = false;
+let lastScanObservation = '';
 
 document.getElementById('start').addEventListener('click', startCamera);
 document.getElementById('stop').addEventListener('click', stopCamera);
+document.getElementById('torch').addEventListener('click', toggleTorch);
+document.getElementById('saveFrame').addEventListener('click', saveCurrentFrame);
 document.getElementById('continue').addEventListener('click', () => {
   sessionStorage.setItem('safespace_scan_note', JSON.stringify({
     type: 'possible_camera',
     recorded_at: new Date().toISOString(),
-    observation: status.textContent,
+    observation: lastScanObservation || status.textContent,
     note: 'User chose to carry this camera scan status into Capture. Bright-spot scan only; not camera detection.'
   }));
   stopCamera();
@@ -73,22 +82,66 @@ document.getElementById('trackerAlert').addEventListener('click', () => {
 
 async function startCamera() {
   if (scanning) return;
+  lastScanObservation = '';
   try {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       throw new Error('Camera access requires a supported browser and a secure (HTTPS) page.');
     }
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    cameraTrack = stream.getVideoTracks()[0];
     video.srcObject = stream;
     await video.play();
     scanning = true;
     document.getElementById('start').disabled = true;
     document.getElementById('stop').disabled = false;
     document.getElementById('continue').disabled = false;
+    const capabilities = cameraTrack && cameraTrack.getCapabilities ? cameraTrack.getCapabilities() : {};
+    const hasTorch = capabilities.torch === true;
+    document.getElementById('torch').disabled = !hasTorch;
+    document.getElementById('torch').textContent = hasTorch ? 'Turn torch on' : 'Torch unavailable';
+    document.getElementById('saveFrame').disabled = false;
+    document.getElementById('torchStatus').textContent = hasTorch ? 'This camera reports torch support.' : 'This browser/device does not expose torch control. Turn the phone flashlight on manually if available.';
     status.textContent = 'Scanning for bright spots only. This result cannot establish whether a camera is present.';
     frameRequest = requestAnimationFrame(scan);
   } catch (e) {
     status.textContent = 'Could not start the camera: ' + e.message + ' Check browser permission and use HTTPS.';
     stopCamera();
+  }
+}
+
+function saveCurrentFrame() {
+  if (!scanning || !video.videoWidth) return;
+  const frame = document.createElement('canvas');
+  frame.width = video.videoWidth;
+  frame.height = video.videoHeight;
+  const ctx = frame.getContext('2d');
+  ctx.drawImage(video, 0, 0, frame.width, frame.height);
+  if (overlay.width && overlay.height) ctx.drawImage(overlay, 0, 0, frame.width, frame.height);
+  frame.toBlob(blob => {
+    if (!blob) { status.textContent = 'Could not save this frame. Try again.'; return; }
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'safespace-scan-' + new Date().toISOString().replace(/[:.]/g, '-') + '.jpg';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }, 'image/jpeg', 0.92);
+}
+
+async function toggleTorch() {
+  if (!cameraTrack || !cameraTrack.applyConstraints) return;
+  const next = !torchOn;
+  try {
+    const current = cameraTrack.getConstraints ? cameraTrack.getConstraints() : {};
+    const advanced = (current.advanced || []).filter(item => !Object.prototype.hasOwnProperty.call(item, 'torch'));
+    advanced.push({ torch: next });
+    await cameraTrack.applyConstraints({ ...current, advanced });
+    torchOn = next;
+    document.getElementById('torch').textContent = torchOn ? 'Turn torch off' : 'Turn torch on';
+    document.getElementById('torchStatus').textContent = torchOn ? 'Phone torch is on.' : 'Phone torch is off.';
+  } catch (e) {
+    document.getElementById('torchStatus').textContent = 'Could not control the torch here. Use the phone flashlight manually if available.';
+    document.getElementById('torch').disabled = true;
   }
 }
 
@@ -99,11 +152,17 @@ function stopCamera() {
   frameRequest = null;
   if (stream) stream.getTracks().forEach(track => track.stop());
   stream = null;
+  cameraTrack = null;
+  torchOn = false;
   video.srcObject = null;
   hits = {};
   document.getElementById('start').disabled = false;
   document.getElementById('stop').disabled = true;
-  if (wasScanning) status.textContent = 'Scan stopped. The result cannot rule out a hidden camera.';
+  document.getElementById('torch').disabled = true;
+  document.getElementById('saveFrame').disabled = true;
+  document.getElementById('torch').textContent = 'Torch unavailable';
+  document.getElementById('torchStatus').textContent = 'Torch off.';
+  if (wasScanning) status.textContent = 'Scan stopped. Last scan: ' + (lastScanObservation || 'no result yet') + ' This cannot rule out a hidden camera.';
 }
 
 function carry(gx, gy) {
@@ -194,6 +253,7 @@ function scan() {
     status.textContent = found
       ? 'Possible bright spots: ' + found + '. This is not camera detection; check these areas by eye if safe.'
       : 'No bright spot flagged in this frame. This scan cannot rule out a hidden camera.';
+    lastScanObservation = status.textContent;
   }
   if (scanning) frameRequest = requestAnimationFrame(scan);
 }
