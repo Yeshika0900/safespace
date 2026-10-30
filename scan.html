@@ -46,7 +46,7 @@ const work = document.getElementById('work');
 const status = document.getElementById('status');
 const W = 320;
 let H = 240;
-const MIN_FRAMES = 7;   // require a longer-lived reflection before drawing a candidate ring
+const MIN_FRAMES = 4;   // brief stability check; persistence alone cannot identify a camera lens
 work.width = W; work.height = H;
 const wctx = work.getContext('2d', { willReadFrequently: true });
 const octx = overlay.getContext('2d');
