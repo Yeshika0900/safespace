@@ -23,6 +23,8 @@
 <button id="stop" disabled>Stop scan</button>
 <button id="torch" type="button" disabled>Torch unavailable</button>
 <span id="torchStatus" role="status" aria-live="polite">Torch capability not checked yet.</span>
+<label id="zoomLabel" hidden>Camera zoom: <input id="zoom" type="range" disabled></label>
+<span id="zoomStatus" role="status" aria-live="polite">Camera zoom capability not checked yet.</span>
 <button id="saveFrame" type="button" disabled>Save current frame</button>
 <div id="wrap">
   <video id="cam" autoplay playsinline muted></video>
@@ -56,11 +58,13 @@ let cameraTrack = null;
 let torchOn = false;
 let lastScanObservation = '';
 let lastFrameAt = 0;
+let zoomTimer = null;
 
 document.getElementById('start').addEventListener('click', startCamera);
 document.getElementById('stop').addEventListener('click', stopCamera);
 document.getElementById('torch').addEventListener('click', toggleTorch);
 document.getElementById('saveFrame').addEventListener('click', saveCurrentFrame);
+document.getElementById('zoom').addEventListener('input', scheduleZoomChange);
 document.getElementById('continue').addEventListener('click', () => {
   sessionStorage.setItem('safespace_scan_note', JSON.stringify({
     type: 'possible_camera',
@@ -103,12 +107,43 @@ async function startCamera() {
     document.getElementById('torch').textContent = hasTorch ? 'Turn torch on' : 'Torch unavailable';
     document.getElementById('saveFrame').disabled = false;
     document.getElementById('torchStatus').textContent = hasTorch ? 'This camera reports torch support.' : 'This browser/device does not expose torch control. Turn the phone flashlight on manually if available.';
-    status.textContent = 'Scanning for bright spots only. This result cannot establish whether a camera is present.';
+    const zoomCaps = capabilities.zoom;
+    if (zoomCaps && Number.isFinite(zoomCaps.min) && Number.isFinite(zoomCaps.max) && zoomCaps.max > zoomCaps.min) {
+      const zoomInput = document.getElementById('zoom');
+      const settings = cameraTrack.getSettings ? cameraTrack.getSettings() : {};
+      zoomInput.min = zoomCaps.min;
+      zoomInput.max = zoomCaps.max;
+      zoomInput.step = zoomCaps.step || 0.1;
+      zoomInput.value = Number.isFinite(settings.zoom) ? settings.zoom : zoomCaps.min;
+      zoomInput.disabled = false;
+      document.getElementById('zoomLabel').hidden = false;
+      document.getElementById('zoomStatus').textContent = 'Camera zoom control is available.';
+    } else {
+      document.getElementById('zoomLabel').hidden = true;
+      document.getElementById('zoomStatus').textContent = 'Camera zoom control is not available here. Move closer only if the camera stays in focus.';
+    }
+    status.textContent = 'Scanning for compact, bright reflections. A candidate does not confirm a camera.';
     frameRequest = requestAnimationFrame(scan);
   } catch (e) {
     status.textContent = 'Could not start the camera: ' + e.message + ' Check browser permission and use HTTPS.';
     stopCamera();
   }
+}
+
+function scheduleZoomChange() {
+  if (zoomTimer) clearTimeout(zoomTimer);
+  zoomTimer = setTimeout(async () => {
+    if (!cameraTrack || !cameraTrack.applyConstraints) return;
+    try {
+      const current = cameraTrack.getConstraints ? cameraTrack.getConstraints() : {};
+      const advanced = (current.advanced || []).filter(item => !Object.prototype.hasOwnProperty.call(item, 'zoom'));
+      advanced.push({ zoom: Number(document.getElementById('zoom').value) });
+      await cameraTrack.applyConstraints({ ...current, advanced });
+      document.getElementById('zoomStatus').textContent = 'Camera zoom: ' + Number(document.getElementById('zoom').value).toFixed(1) + '×';
+    } catch (e) {
+      document.getElementById('zoomStatus').textContent = 'Could not change camera zoom on this device.';
+    }
+  }, 180);
 }
 
 function saveCurrentFrame() {
@@ -156,12 +191,17 @@ function stopCamera() {
   stream = null;
   cameraTrack = null;
   torchOn = false;
+  if (zoomTimer) clearTimeout(zoomTimer);
+  zoomTimer = null;
   video.srcObject = null;
   hits = {};
   document.getElementById('start').disabled = false;
   document.getElementById('stop').disabled = true;
   document.getElementById('torch').disabled = true;
   document.getElementById('saveFrame').disabled = true;
+  document.getElementById('zoom').disabled = true;
+  document.getElementById('zoomLabel').hidden = true;
+  document.getElementById('zoomStatus').textContent = 'Camera stopped.';
   document.getElementById('torch').textContent = 'Torch unavailable';
   document.getElementById('torchStatus').textContent = 'Torch off.';
   if (wasScanning) status.textContent = 'Scan stopped. Last scan: ' + (lastScanObservation || 'no result yet') + ' This cannot rule out a hidden camera.';
