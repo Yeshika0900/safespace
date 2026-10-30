@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SafeSpace Changing Room Mode</title>
+<style>
+  body { font-family: sans-serif; padding: 14px; max-width: 520px; margin: auto; color: #1c1c1e; }
+  .card { background: #f4f4f4; padding: 12px; margin: 12px 0; border-radius: 10px; }
+  .card p { margin: 6px 0; font-size: 14px; }
+  button { font-size: 15px; padding: 8px 12px; margin: 6px 6px 0 0; border-radius: 8px; border: 1px solid #999; background: #fff; }
+  button.sus { border-color: #c8325f; color: #c8325f; }
+  button.main { background: #1c1c1e; color: #fff; border: none; font-size: 17px; padding: 12px 18px; }
+  .ok { color: #1f7a4d; font-weight: bold; }
+  .bad { color: #c8325f; font-weight: bold; }
+  .h { font-size: 12px; color: #555; word-break: break-all; margin-top: 4px; }
+  pre { background: #f4f4f4; padding: 10px; white-space: pre-wrap; word-break: break-all; font-size: 12px; }
+  .warn { background: #fff4f7; border: 1px solid #c8325f; padding: 10px; border-radius: 10px; font-size: 14px; }
+</style>
+</head>
+<body>
+<h2>Changing Room Mode</h2>
+<div class="warn">If anything feels wrong, do not change clothes here. Tell the staff or manager, and call 112 or 1091 if you feel unsafe.
+This is a guided check, not a guarantee.</div>
+<p>Go through each area. Take or choose a photo, then mark it <b>Looks normal</b> or <b>Suspicious</b>.</p>
+
+<div id="list"></div>
+<button class="main" id="finish">Finish and create record</button>
+<pre id="record">No record yet</pre>
+<button id="dl" style="display:none">Download record (use it on the Report page)</button>
+<p><a href="report.html">Go to Report page</a> &nbsp; <a href="home.html">Home</a></p>
+
+<script>
+const areas = [
+  ['Mirror', 'Look closely. Does anything look odd behind or around it?'],
+  ['Mirror touch test', 'Touch your fingertip to the mirror. If there is no gap between your finger and its reflection, it may be a two-way mirror. This is not a sure test, only one more clue.', true],
+  ['Ceiling', 'Look for tiny holes, lenses or unusual objects.'],
+  ['Walls and corners', 'Check corners, wall joints and anything stuck on the wall.'],
+  ['Hooks and screws', 'Check hooks, screws and small fittings that point at you.'],
+  ['Door and gaps', 'Look for small holes or gaps in the door and walls.'],
+  ['Vents and lights', 'Check vents, bulbs and anything with a small dark dot.']
+];
+const state = areas.map(a => ({ area: a[0], status: 'not checked', photo: null, photo_sha256: null }));
+let record = null;
+
+const list = document.getElementById('list');
+list.innerHTML = areas.map((a, i) =>
+  '<div class="card"><b>' + (i + 1) + '. ' + a[0] + '</b><p>' + a[1] + '</p>' +
+  (a[2] ? '' : '<input type="file" accept="image/*" class="ph" data-i="' + i + '"><div class="h" id="h' + i + '"></div>') +
+  '<button class="st" data-i="' + i + '" data-s="normal">Looks normal</button>' +
+  '<button class="st sus" data-i="' + i + '" data-s="suspicious">Suspicious</button>' +
+  ' <span id="s' + i + '"></span></div>'
+).join('');
+
+async function sha256Buf(buf) {
+  const h = await crypto.subtle.digest('SHA-256', buf);
+  return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+function getLocation() {
+  return new Promise(res => {
+    if (!navigator.geolocation) return res('Location not available');
+    navigator.geolocation.getCurrentPosition(
+      p => res(p.coords.latitude.toFixed(5) + ', ' + p.coords.longitude.toFixed(5)),
+      () => res('Location not allowed'), { timeout: 8000 });
+  });
+}
+
+document.addEventListener('change', async e => {
+  if (!e.target.classList.contains('ph')) return;
+  const i = Number(e.target.dataset.i);
+  const f = e.target.files[0];
+  if (!f) return;
+  const hash = await sha256Buf(await f.arrayBuffer());
+  state[i].photo = f.name;
+  state[i].photo_sha256 = hash;
+  document.getElementById('h' + i).textContent = 'Fingerprint: ' + hash.slice(0, 16) + '...';
+});
+
+document.addEventListener('click', e => {
+  if (!e.target.classList.contains('st')) return;
+  const i = Number(e.target.dataset.i);
+  const s = e.target.dataset.s;
+  state[i].status = s;
+  const el = document.getElementById('s' + i);
+  el.textContent = s === 'normal' ? 'Marked normal' : 'Marked suspicious';
+  el.className = s === 'normal' ? 'ok' : 'bad';
+});
+
+document.getElementById('finish').onclick = async () => {
+  const out = document.getElementById('record');
+  out.textContent = 'Working...';
+  const loc = await getLocation();
+  const when = new Date().toISOString();
+  const checked = state.filter(s => s.status !== 'not checked').length;
+  const sus = state.filter(s => s.status === 'suspicious').map(s => s.area);
+  const body = { room: 'Changing room', captured_at: when, location: loc, items: state };
+  const sha = await sha256Buf(new TextEncoder().encode(JSON.stringify(body)));
+  record = {
+    file: 'Changing room inspection (' + checked + ' of ' + state.length + ' areas checked; suspicious: ' + (sus.length ? sus.join(', ') : 'none') + ')',
+    captured_at: when,
+    location: loc,
+    sha256: sha,
+    items: state
+  };
+  out.textContent = JSON.stringify(record, null, 2);
+  document.getElementById('dl').style.display = 'inline-block';
+};
+
+document.getElementById('dl').onclick = () => {
+  const blob = new Blob([JSON.stringify(record, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'evidence-record.json';
+  a.click();
+};
+</script>
+</body>
+</html>
