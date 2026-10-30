@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SafeSpace Scan</title>
+<style>
+  body { font-family: Inter, system-ui, sans-serif; text-align: center; max-width:760px; margin: 0 auto; padding: 22px 16px 40px; background:#111820; color:#f4f3ee; }
+  #wrap { position: relative; display: block; width: 100%; max-width: 560px; margin:16px auto; overflow:hidden; border-radius:14px; background:#1a2630; }
+  video { width: 100%; display: block; }
+  #overlay { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+  button { font:inherit; font-size: 15px; padding: 10px 16px; margin: 8px; border:0; border-radius:8px; background:#f5a37b; color:#182127; cursor:pointer; font-weight:700; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .tip { font-size: 14px; color: #d2dcdf; line-height:1.55; background:#1a2630; border-radius:10px; padding:12px; }
+  a { color:#ffc09f; }
+</style>
+</head>
+<body>
+<h2>SafeSpace Scan</h2>
+<p class="tip">If your phone has a torch, turn it on and sweep slowly. Browser camera access to the torch varies by device.</p>
+<p class="tip"><b>This scan only flags bright spots in the camera image. It cannot detect or rule out hidden cameras.</b> Use it as one clue, and check anything concerning in person if it is safe to do so.</p>
+<button id="start">Start scan</button>
+<button id="stop" disabled>Stop scan</button>
+<div id="wrap">
+  <video id="cam" autoplay playsinline muted></video>
+  <canvas id="overlay"></canvas>
+</div>
+<p id="status" role="status" aria-live="polite">Press Start scan</p>
+<label>Sensitivity: <input id="thr" type="range" min="200" max="255" value="248"></label>
+<p><button id="continue" type="button" disabled>Record my observation and continue to Capture</button></p>
+<p><button id="trackerAlert" type="button">I received a tracker alert on my phone</button></p>
+<aside class="tip"><b>Wi-Fi and Bluetooth tracker checks</b><br>This web demo does not scan Wi-Fi devices or identify Bluetooth trackers. Use your phone’s built-in tracker safety tools if you receive an alert; this page cannot confirm that a device is safe.</aside>
+<p><a href="changing.html">Open the room checklist</a> &nbsp; <a href="index.html">Home</a></p>
+<canvas id="work" style="display:none"></canvas>
+
+<script>
+const video = document.getElementById('cam');
+const overlay = document.getElementById('overlay');
+const work = document.getElementById('work');
+const status = document.getElementById('status');
+const W = 160, H = 120;
+const RING_MAX = 120;   // surroundings must be darker than this
+const MIN_FRAMES = 4;   // spot must persist this many frames
+work.width = W; work.height = H;
+const wctx = work.getContext('2d', { willReadFrequently: true });
+const octx = overlay.getContext('2d');
+let hits = {};
+let stream = null;
+let scanning = false;
+let frameRequest = null;
+
+document.getElementById('start').addEventListener('click', startCamera);
+document.getElementById('stop').addEventListener('click', stopCamera);
+document.getElementById('continue').addEventListener('click', () => {
+  sessionStorage.setItem('safespace_scan_note', JSON.stringify({
+    type: 'possible_camera',
+    recorded_at: new Date().toISOString(),
+    observation: status.textContent,
+    note: 'User chose to carry this camera scan status into Capture. Bright-spot scan only; not camera detection.'
+  }));
+  stopCamera();
+  window.location.href = 'capture.html';
+});
+document.getElementById('trackerAlert').addEventListener('click', () => {
+  sessionStorage.setItem('safespace_scan_note', JSON.stringify({
+    type: 'tracker_alert',
+    recorded_at: new Date().toISOString(),
+    observation: 'User reports receiving a Bluetooth tracker alert from their phone.',
+    note: 'SafeSpace did not scan for, identify, or verify a tracker.'
+  }));
+  window.location.href = 'capture.html';
+});
+
+async function startCamera() {
+  if (scanning) return;
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error('Camera access requires a supported browser and a secure (HTTPS) page.');
+    }
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    video.srcObject = stream;
+    await video.play();
+    scanning = true;
+    document.getElementById('start').disabled = true;
+    document.getElementById('stop').disabled = false;
+    document.getElementById('continue').disabled = false;
+    status.textContent = 'Scanning for bright spots only. This result cannot establish whether a camera is present.';
+    frameRequest = requestAnimationFrame(scan);
+  } catch (e) {
+    status.textContent = 'Could not start the camera: ' + e.message + ' Check browser permission and use HTTPS.';
+    stopCamera();
+  }
+}
+
+function stopCamera() {
+  const wasScanning = scanning;
+  scanning = false;
+  if (frameRequest !== null) cancelAnimationFrame(frameRequest);
+  frameRequest = null;
+  if (stream) stream.getTracks().forEach(track => track.stop());
+  stream = null;
+  video.srcObject = null;
+  hits = {};
+  document.getElementById('start').disabled = false;
+  document.getElementById('stop').disabled = true;
+  if (wasScanning) status.textContent = 'Scan stopped. The result cannot rule out a hidden camera.';
+}
+
+function carry(gx, gy) {
+  let m = 0;
+  for (let dx = -1; dx <= 1; dx++)
+    for (let dy = -1; dy <= 1; dy++)
+      m = Math.max(m, hits[(gx + dx) + ',' + (gy + dy)] || 0);
+  return m;
+}
+
+function scan() {
+  if (video.videoWidth) {
+    if (overlay.width !== video.videoWidth || overlay.height !== video.videoHeight) {
+      overlay.width = video.videoWidth;
+      overlay.height = video.videoHeight;
+    }
+    wctx.drawImage(video, 0, 0, W, H);
+    const d = wctx.getImageData(0, 0, W, H).data;
+    const thr = Number(document.getElementById('thr').value);
+    const lum = new Uint8Array(W * H);
+    for (let i = 0; i < W * H; i++) {
+      lum[i] = 0.299 * d[i*4] + 0.587 * d[i*4+1] + 0.114 * d[i*4+2];
+    }
+    const seen = new Uint8Array(W * H);
+    const cands = [];
+
+    for (let i = 0; i < W * H; i++) {
+      if (lum[i] <= thr || seen[i]) continue;
+      const stack = [i];
+      seen[i] = 1;
+      let n = 0, minX = W, maxX = 0, minY = H, maxY = 0, peak = 0;
+      while (stack.length) {
+        const p = stack.pop();
+        n++;
+        const x = p % W, y = (p - x) / W;
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+        if (lum[p] > peak) peak = lum[p];
+        const nb = [];
+        if (x > 0) nb.push(p - 1);
+        if (x < W - 1) nb.push(p + 1);
+        if (y > 0) nb.push(p - W);
+        if (y < H - 1) nb.push(p + W);
+        for (const q of nb) {
+          if (lum[q] > thr && !seen[q]) { seen[q] = 1; stack.push(q); }
+        }
+      }
+      const bw = maxX - minX + 1, bh = maxY - minY + 1;
+      const roundish = Math.abs(bw - bh) <= Math.max(bw, bh) * 0.5;
+      const filled = n / (bw * bh) > 0.5;
+      if (n < 3 || n > 40 || !roundish || !filled) continue;
+
+      // check the surroundings are dark
+      let sum = 0, cnt = 0;
+      const x0 = Math.max(0, minX - 4), x1 = Math.min(W - 1, maxX + 4);
+      const y0 = Math.max(0, minY - 4), y1 = Math.min(H - 1, maxY + 4);
+      for (let x = x0; x <= x1; x++) {
+        sum += lum[y0 * W + x] + lum[y1 * W + x]; cnt += 2;
+      }
+      for (let y = y0; y <= y1; y++) {
+        sum += lum[y * W + x0] + lum[y * W + x1]; cnt += 2;
+      }
+      if (sum / cnt > RING_MAX) continue;
+
+      cands.push({ cx: (minX + maxX + 1) / 2, cy: (minY + maxY + 1) / 2, r: Math.max(bw, bh) / 2, peak });
+    }
+
+    cands.sort((a, b) => b.peak - a.peak);
+    const top = cands.slice(0, 3);
+    const newHits = {};
+    octx.clearRect(0, 0, overlay.width, overlay.height);
+    octx.strokeStyle = 'red';
+    octx.lineWidth = 3;
+    const sx = overlay.width / W, sy = overlay.height / H;
+    let found = 0;
+    for (const c of top) {
+      const gx = Math.floor(c.cx / 6), gy = Math.floor(c.cy / 6);
+      const key = gx + ',' + gy;
+      newHits[key] = carry(gx, gy) + 1;
+      if (newHits[key] >= MIN_FRAMES) {
+        found++;
+        octx.beginPath();
+        octx.arc(c.cx * sx, c.cy * sy, c.r * sx + 14, 0, Math.PI * 2);
+        octx.stroke();
+      }
+    }
+    hits = newHits;
+    status.textContent = found
+      ? 'Possible bright spots: ' + found + '. This is not camera detection; check these areas by eye if safe.'
+      : 'No bright spot flagged in this frame. This scan cannot rule out a hidden camera.';
+  }
+  if (scanning) frameRequest = requestAnimationFrame(scan);
+}
+</script>
+</body>
+</html>

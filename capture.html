@@ -5,34 +5,76 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SafeSpace Capture</title>
 <style>
-  body { font-family: sans-serif; padding: 14px; max-width: 480px; margin: auto; }
-  button, input { font-size: 16px; margin: 6px 0; }
-  pre { background: #f2f2f2; padding: 10px; white-space: pre-wrap; word-break: break-all; }
-  #result { font-weight: bold; }
-  .note { background: #fff7e6; padding: 10px; line-height: 1.45; }
-  img { display: block; max-width: 100%; max-height: 360px; margin: 8px 0; }
+  body { font-family: Inter, system-ui, sans-serif; padding: 22px 16px 40px; max-width: 680px; margin: auto; background:#111820; color:#f4f3ee; }
+  button, input, textarea, select { font: inherit; margin: 6px 0; }
+  label { display: block; margin-top: 14px; font-weight: 600; }
+  input[type="file"] { display: block; max-width: 100%; }
+  input[type="checkbox"] { width: auto; }
+  textarea, select { display: block; width: 100%; padding: 10px; border:1px solid #61717a; border-radius:8px; background:#1a2630; color:#fff; }
+  input { max-width:100%; }
+  pre { background: #f4f3ee; color:#182127; padding: 12px; white-space: pre-wrap; word-break: break-word; border-radius:10px; }
+  #result { font-weight: bold; line-height:1.5; }
+  .note { background: #1a2630; padding: 12px; line-height: 1.5; border-radius:10px; color:#d2dcdf; }
+  img { display: block; max-width: 100%; max-height: 360px; margin: 8px 0; border-radius:10px; }
+  button { border:0; border-radius:8px; background:#f5a37b; color:#182127; padding:10px 14px; cursor:pointer; font-weight:700; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  a { color:#ffc09f; }
 </style>
 </head>
 <body>
 <h2>SafeSpace Capture</h2>
 <p class="note"><b>Privacy:</b> Your selected photo is processed in this browser and is not uploaded. The JSON record does not contain the photo; download both files and keep them together. The device time and optional location are user-device metadata, not independent proof of when or where a photo was taken.</p>
+<p id="scanContext" class="note" hidden></p>
+<label for="kind">What are you documenting?</label>
+<select id="kind">
+  <option value="possible_camera">Possible hidden camera concern</option>
+  <option value="tracker_alert">Unknown tracker alert</option>
+  <option value="suspicious_device">Suspicious device or network observation</option>
+  <option value="other">Other privacy concern</option>
+</select>
+<label for="summary">What did you notice? (optional)</label>
+<textarea id="summary" rows="3" placeholder="Write only what you directly observed. Avoid guessing."></textarea>
+<label><input type="checkbox" id="includeScan" disabled> Include the scan note shown above in this record</label>
 <p><b>Step 1:</b> Choose the original photo (camera or gallery)</p>
-<input type="file" id="photo" accept="image/*">
+<input type="file" id="photo" accept="image/*" capture="environment">
 <img id="preview" alt="Preview of the selected photo" hidden>
+<button id="createRecord" type="button" disabled>Create evidence record</button>
 <pre id="record">No evidence saved yet</pre>
-<button id="dlRecord" style="display:none">Download JSON record</button>
-<button id="dlPhoto" style="display:none">Download original photo</button>
+<button id="dlRecord" type="button" style="display:none">Download JSON record</button>
+<button id="dlPhoto" type="button" style="display:none">Download original photo</button>
+<p><a href="report.html">Continue to Report</a> &nbsp; <a href="changing.html">Room checklist</a> &nbsp; <a href="index.html">Home</a></p>
 <hr>
 <p><b>Step 2:</b> Load a saved JSON record (optional)</p>
 <input type="file" id="savedRecord" accept=".json,application/json">
 <p><b>Step 3:</b> Check a photo against the record’s fingerprint</p>
 <input type="file" id="verify" accept="image/*">
 <p id="result" role="status" aria-live="polite"></p>
-<p><a href="home.html">Home</a></p>
 
 <script>
 let record = null;
 let photoFile = null;
+let photoHash = null;
+let scanNote = null;
+
+try {
+  scanNote = JSON.parse(sessionStorage.getItem('safespace_scan_note') || 'null');
+  sessionStorage.removeItem('safespace_scan_note');
+  if (scanNote) {
+    const panel = document.getElementById('scanContext');
+    panel.hidden = false;
+    panel.textContent = 'Scan note to review: ' + scanNote.observation + ' ' + scanNote.note;
+    document.getElementById('includeScan').disabled = false;
+    document.getElementById('includeScan').checked = false;
+    if (['possible_camera', 'tracker_alert', 'suspicious_device', 'other'].includes(scanNote.type)) {
+      document.getElementById('kind').value = scanNote.type;
+    }
+  }
+} catch (err) { scanNote = null; }
+
+document.getElementById('includeScan').addEventListener('change', e => {
+  const summary = document.getElementById('summary');
+  if (e.target.checked && scanNote && !summary.value.trim()) summary.value = scanNote.observation;
+});
 
 async function sha256(file) {
   const buf = await file.arrayBuffer();
@@ -52,32 +94,47 @@ function getLocation() {
 
 document.getElementById('photo').addEventListener('change', async e => {
   const f = e.target.files[0];
-  if (!f) return;
+  if (!f) { photoFile = null; photoHash = null; document.getElementById('createRecord').disabled = true; return; }
   photoFile = f;
+  record = null;
+  photoHash = null;
+  document.getElementById('createRecord').disabled = true;
   document.getElementById('record').textContent = 'Working...';
   try {
-    const hash = await sha256(f);
-    const loc = await getLocation();
-    record = {
-      schema: 'safespace-evidence-v1',
-      file: f.name,
-      size_bytes: f.size,
-      recorded_at: new Date().toISOString(),
-      device_location: loc,
-      sha256: hash,
-      note: 'Fingerprint of the selected file only. This record does not prove capture time, location, authorship, or that the JSON itself is unchanged.'
-    };
-    document.getElementById('record').textContent = JSON.stringify(record, null, 2);
+    photoHash = await sha256(f);
     const preview = document.getElementById('preview');
     preview.src = URL.createObjectURL(f);
     preview.hidden = false;
-    document.getElementById('dlRecord').style.display = 'inline-block';
-    document.getElementById('dlPhoto').style.display = 'inline-block';
-    document.getElementById('result').textContent = '';
+    document.getElementById('record').textContent = 'Photo ready. Review the note, then create your record.';
+    document.getElementById('createRecord').disabled = false;
   } catch (err) {
-    record = null;
     document.getElementById('record').textContent = 'Could not create a fingerprint: ' + err.message;
   }
+});
+
+document.getElementById('createRecord').addEventListener('click', async () => {
+  if (!photoFile || !photoHash) return;
+  const button = document.getElementById('createRecord');
+  button.disabled = true;
+  document.getElementById('record').textContent = 'Creating local record…';
+  const loc = await getLocation();
+  record = {
+    schema: 'safespace-evidence-v1',
+    concern_type: document.getElementById('kind').value,
+    observation: document.getElementById('summary').value.trim(),
+    scan_observation: document.getElementById('includeScan').checked ? scanNote : null,
+    file: photoFile.name,
+    size_bytes: photoFile.size,
+    recorded_at: new Date().toISOString(),
+    device_location: loc,
+    sha256: photoHash,
+    note: 'Fingerprint of the selected file only. This record does not prove capture time, location, authorship, or that the JSON itself is unchanged.'
+  };
+  document.getElementById('record').textContent = JSON.stringify(record, null, 2);
+  document.getElementById('dlRecord').style.display = 'inline-block';
+  document.getElementById('dlPhoto').style.display = 'inline-block';
+  document.getElementById('result').textContent = '';
+  button.disabled = false;
 });
 
 function downloadBlob(blob, filename) {

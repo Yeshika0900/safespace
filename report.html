@@ -5,18 +5,31 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SafeSpace Report</title>
 <style>
-  body { font-family: sans-serif; padding: 14px; max-width: 560px; margin: auto; }
+  body { font-family: Inter, system-ui, sans-serif; padding: 22px 16px 40px; max-width: 700px; margin: auto; background:#111820; color:#f4f3ee; }
   label { display: block; margin-top: 12px; font-weight: bold; }
-  input, textarea, button { font-size: 16px; width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px; }
-  button { width: auto; margin: 12px 8px 0 0; }
-  #out { white-space: pre-wrap; background: #f7f7f7; padding: 14px; margin-top: 16px; line-height: 1.5; }
-  .help { background: #f2f2f2; padding: 10px; margin-top: 16px; }
-  @media print { .controls, .help { display: none; } #out { background: white; } }
+  input, textarea, button, select { font: inherit; width: 100%; box-sizing: border-box; margin-top: 5px; padding: 10px; border-radius:8px; }
+  input, textarea, select { border:1px solid #61717a; background:#1a2630; color:#fff; }
+  button { width: auto; margin: 12px 8px 0 0; cursor:pointer; border:0; background:#f5a37b; color:#182127; font-weight:700; }
+  #out { white-space: pre-wrap; background: #f4f3ee; color:#182127; padding: 18px; margin-top: 16px; line-height: 1.6; border-radius:10px; }
+  .help, .note { background: #1a2630; padding: 14px; margin-top: 16px; line-height:1.55; border-radius:10px; color:#d2dcdf; }
+  a { color:#ffc09f; }
+  @media print { body { background:white; color:black; padding:0; } .controls, .help, .note, .nav { display: none; } #out { background: white; color:black; border:0; } }
 </style>
 </head>
 <body>
 <h2>SafeSpace Report</h2>
 <div class="controls">
+  <label for="lang">Draft language</label>
+  <select id="lang"><option value="en">English</option><option value="hi">हिन्दी</option></select>
+
+  <label for="type">What are you reporting?</label>
+  <select id="type">
+    <option value="camera">Possible hidden camera or privacy concern</option>
+    <option value="tracker">Unknown Bluetooth tracker alert</option>
+    <option value="network">Suspicious device or network observation</option>
+    <option value="other">Other concern</option>
+  </select>
+
   <label>Where did this happen? (hotel, PG, shop name and city)</label>
   <input id="place" placeholder="e.g. Hotel Sunrise, Noida">
 
@@ -30,7 +43,10 @@
   <input id="rec" type="file" accept=".json,application/json">
 
   <button id="gen">Generate complaint</button>
+  <button id="copy">Copy draft</button>
   <button id="print">Save as PDF</button>
+  <button id="maps">Find a nearby police station</button>
+  <p class="note">Maps will receive the place you entered only if you click the button. Review its result for accuracy.</p>
 </div>
 
 <div id="out">Your complaint draft will appear here.</div>
@@ -40,9 +56,9 @@
   Emergency services: <a href="https://112.gov.in/" target="_blank" rel="noopener noreferrer">112</a><br>
   Women’s Helpline: <a href="https://wcd.gov.in/women/help" target="_blank" rel="noopener noreferrer">181</a><br>
   For cybercrime, use the <a href="https://cybercrime.gov.in/" target="_blank" rel="noopener noreferrer">National Cyber Crime Reporting Portal</a>. Its 1930 helpline is for cyber financial fraud.<br>
-  <i>This is a draft, not legal advice. Review it for accuracy and contact local support or a lawyer if needed.</i>
+  <i>This is a structured template, not AI-generated legal advice. It does not determine which laws or sections apply. Review every detail before using it.</i>
 </div>
-<p><a href="home.html">Home</a></p>
+<p class="nav"><a href="index.html">Home</a></p>
 
 <script>
 let evidence = null;
@@ -50,7 +66,12 @@ let evidence = null;
 document.getElementById('rec').addEventListener('change', async e => {
   const f = e.target.files[0];
   if (!f) return;
-  try { evidence = JSON.parse(await f.text()); }
+  try {
+    evidence = JSON.parse(await f.text());
+    if (evidence.observation && !document.getElementById('desc').value) document.getElementById('desc').value = evidence.observation;
+    const kindMap = { possible_camera: 'camera', tracker_alert: 'tracker', suspicious_device: 'network' };
+    if (kindMap[evidence.concern_type]) document.getElementById('type').value = kindMap[evidence.concern_type];
+  }
   catch (err) { evidence = null; alert('Could not read that file. Use the evidence-record.json from the Capture page.'); }
 });
 
@@ -58,34 +79,74 @@ document.getElementById('gen').onclick = () => {
   const place = document.getElementById('place').value.trim() || '[place of incident]';
   const date = document.getElementById('date').value || '[date]';
   const desc = document.getElementById('desc').value.trim() || '[description of what happened]';
+  const lang = document.getElementById('lang').value;
+  const type = document.getElementById('type').value;
+  const typeEn = { camera: 'possible hidden camera or privacy concern', tracker: 'unknown Bluetooth tracker alert', network: 'suspicious device or network observation', other: 'other privacy concern' }[type];
+  const typeHi = { camera: 'संभावित छिपे कैमरे या निजता से जुड़ी चिंता', tracker: 'अज्ञात Bluetooth tracker का अलर्ट', network: 'संदिग्ध डिवाइस या नेटवर्क से जुड़ी जानकारी', other: 'निजता से जुड़ी अन्य चिंता' }[type];
 
   let ev = 'No digital evidence file was attached to this draft.';
   if (evidence) {
-    const fingerprintNote = evidence.schema === 'safespace-inspection-v1'
-      ? 'The SHA-256 is a fingerprint of checklist contents generated by this app. This draft does not verify the record; photos are separate files.'
-      : 'The SHA-256 is a fingerprint of a selected photo file. Compare it with the original in the Capture page. It does not prove when, where, or by whom the file or record was created.';
-    ev = 'I have a separate user-generated evidence record with these details (the JSON and any photos must be attached separately if submitting them):\n' +
-      '- Record: ' + (evidence.file || 'not named') + '\n' +
-      '- Record time (device-provided): ' + (evidence.recorded_at || evidence.captured_at || 'not recorded') + '\n' +
-      '- Device location (optional): ' + (evidence.device_location || evidence.location || 'not included') + '\n' +
-      '- SHA-256 fingerprint: ' + evidence.sha256 + '\n' +
-      fingerprintNote;
+    const isChecklist = evidence.schema === 'safespace-inspection-v1';
+    const fingerprintNote = lang === 'hi'
+      ? (isChecklist
+        ? 'यह SHA-256 इस ऐप में बनी checklist सामग्री का fingerprint है। यह मसौदा record की पुष्टि नहीं करता; फोटो अलग फाइलें हैं।'
+        : 'यह SHA-256 चुनी गई फोटो का fingerprint है। Capture पेज पर इसे मूल फोटो से मिलाएँ। इससे फोटो का समय, स्थान या लेखक साबित नहीं होता।')
+      : (isChecklist
+        ? 'The SHA-256 is a fingerprint of checklist contents generated by this app. This draft does not verify the record; photos are separate files.'
+        : 'The SHA-256 is a fingerprint of a selected photo file. Compare it with the original in the Capture page. It does not prove when, where, or by whom the file or record was created.');
+    const checklistDetails = Array.isArray(evidence.items) && evidence.items.length
+      ? '\n' + (lang === 'hi' ? 'जाँच-सूची की स्थिति:' : 'Checklist status:') + '\n' + evidence.items.map(item => {
+          const state = lang === 'hi'
+            ? ({ normal: 'सामान्य चिह्नित', suspicious: 'संदिग्ध चिह्नित', 'not checked': 'जाँच नहीं हुई' }[item.status] || item.status)
+            : item.status;
+          return '- ' + item.area + ': ' + state + (item.photo ? ' (' + item.photo + ')' : '');
+        }).join('\n')
+      : '';
+    const scanDetails = evidence.scan_observation && evidence.scan_observation.observation
+      ? '\n' + (lang === 'hi' ? 'उपयोगकर्ता द्वारा जोड़ी गई scan टिप्पणी: ' : 'User-added scan note: ') + evidence.scan_observation.observation + '\n' + (evidence.scan_observation.note || '')
+      : '';
+    ev = lang === 'hi'
+      ? 'मेरे पास नीचे दिए गए विवरण वाला अलग evidence record है (जमा करते समय JSON और फोटो अलग से संलग्न करें):\n' +
+        '- Record: ' + (evidence.file || 'नाम उपलब्ध नहीं') + '\n' +
+        '- Record का समय (डिवाइस द्वारा दिया गया): ' + (evidence.recorded_at || evidence.captured_at || 'उपलब्ध नहीं') + '\n' +
+        '- डिवाइस का स्थान (वैकल्पिक): ' + (evidence.device_location || evidence.location || 'शामिल नहीं') + '\n' +
+        '- SHA-256 fingerprint: ' + evidence.sha256 + '\n' + fingerprintNote + checklistDetails + scanDetails
+      : 'I have a separate user-generated evidence record with these details (attach the JSON and any photos separately if submitting them):\n' +
+        '- Record: ' + (evidence.file || 'not named') + '\n' +
+        '- Record time (device-provided): ' + (evidence.recorded_at || evidence.captured_at || 'not recorded') + '\n' +
+        '- Device location (optional): ' + (evidence.device_location || evidence.location || 'not included') + '\n' +
+        '- SHA-256 fingerprint: ' + evidence.sha256 + '\n' + fingerprintNote + checklistDetails + scanDetails;
   }
 
-  const text =
-'To,\nThe Station House Officer / Cyber Crime Cell\n\n' +
-'Subject: Complaint regarding a suspected privacy violation (possible hidden camera) at ' + place + '\n\n' +
-'Respected Sir/Madam,\n\n' +
-'I wish to report an incident that took place on ' + date + ' at ' + place + '.\n\n' +
-desc + '\n\n' +
-ev + '\n\n' +
-'I request you to kindly register my complaint, examine the evidence, and take appropriate action as per law.\n\n' +
-'Yours faithfully,\n\nName: ____________________\nContact: ____________________\nSignature: ____________________\nDate: ' + new Date().toLocaleDateString();
+  const text = lang === 'hi'
+    ? 'सेवा में,\nथाना प्रभारी / संबंधित पुलिस अधिकारी\n\n' +
+      'विषय: ' + typeHi + ' के संबंध में शिकायत — ' + place + '\n\n' +
+      'महोदय/महोदया,\n\nमैं दिनांक ' + date + ' को ' + place + ' पर हुई घटना/चिंता की जानकारी देना चाहता/चाहती हूँ।\n\n' +
+      desc + '\n\n' + ev + '\n\n' +
+      'कृपया मेरी शिकायत दर्ज कर उचित जाँच और आगे की कार्रवाई के बारे में मार्गदर्शन दें। लागू कानूनी प्रावधानों की पुष्टि संबंधित अधिकारी या वकील से करें।\n\n' +
+      'सादर,\nनाम: ____________________\nसंपर्क: ____________________\nहस्ताक्षर: ____________________\nदिनांक: ' + new Date().toLocaleDateString('hi-IN')
+    : 'To,\nThe Station House Officer / relevant police officer\n\n' +
+      'Subject: Complaint about ' + typeEn + ' at ' + place + '\n\n' +
+      'Dear Sir/Madam,\n\nI wish to report a concern about an incident that took place on ' + date + ' at ' + place + '.\n\n' +
+      desc + '\n\n' + ev + '\n\n' +
+      'Please record my complaint, examine the information provided, and guide me on appropriate next steps. Please confirm any applicable legal provisions with the investigating officer or a lawyer.\n\n' +
+      'Yours faithfully,\nName: ____________________\nContact: ____________________\nSignature: ____________________\nDate: ' + new Date().toLocaleDateString();
 
   document.getElementById('out').textContent = text;
 };
 
 document.getElementById('print').onclick = () => window.print();
+document.getElementById('copy').onclick = async () => {
+  const text = document.getElementById('out').textContent;
+  try { await navigator.clipboard.writeText(text); alert('Draft copied. Review it before sharing.'); }
+  catch (err) { alert('Copy was unavailable. Select the draft text and copy it manually.'); }
+};
+document.getElementById('maps').onclick = () => {
+  const place = document.getElementById('place').value.trim();
+  if (!place) { alert('Enter the hotel, PG, area, or city first.'); return; }
+  const query = 'police station near ' + place;
+  window.open('https://www.google.com/maps/search/' + encodeURIComponent(query), '_blank', 'noopener,noreferrer');
+};
 </script>
 </body>
 </html>
