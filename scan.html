@@ -42,7 +42,8 @@ const video = document.getElementById('cam');
 const overlay = document.getElementById('overlay');
 const work = document.getElementById('work');
 const status = document.getElementById('status');
-const W = 200, H = 150;
+const W = 320;
+let H = 240;
 const MIN_FRAMES = 4;   // spot must persist this many frames
 work.width = W; work.height = H;
 const wctx = work.getContext('2d', { willReadFrequently: true });
@@ -54,6 +55,7 @@ let frameRequest = null;
 let cameraTrack = null;
 let torchOn = false;
 let lastScanObservation = '';
+let lastFrameAt = 0;
 
 document.getElementById('start').addEventListener('click', startCamera);
 document.getElementById('stop').addEventListener('click', stopCamera);
@@ -91,6 +93,7 @@ async function startCamera() {
     video.srcObject = stream;
     await video.play();
     scanning = true;
+    lastFrameAt = 0;
     document.getElementById('start').disabled = true;
     document.getElementById('stop').disabled = false;
     document.getElementById('continue').disabled = false;
@@ -173,7 +176,19 @@ function carry(gx, gy) {
 }
 
 function scan() {
+  const frameTime = performance.now();
+  if (frameTime - lastFrameAt < 66) {
+    if (scanning) frameRequest = requestAnimationFrame(scan);
+    return;
+  }
+  lastFrameAt = frameTime;
   if (video.videoWidth) {
+    const workHeight = Math.round(W * video.videoHeight / video.videoWidth);
+    if (H !== workHeight) H = workHeight;
+    if (work.width !== W || work.height !== H) {
+      work.width = W;
+      work.height = H;
+    }
     if (overlay.width !== video.videoWidth || overlay.height !== video.videoHeight) {
       overlay.width = video.videoWidth;
       overlay.height = video.videoHeight;
@@ -213,7 +228,7 @@ function scan() {
       const bw = maxX - minX + 1, bh = maxY - minY + 1;
       const aspect = Math.min(bw, bh) / Math.max(bw, bh);
       const fill = n / (bw * bh);
-      if (n < 3 || n > 72 || aspect < 0.48 || fill < 0.38) continue;
+      if (n < 2 || n > 180 || aspect < 0.48 || fill < 0.38) continue;
 
       // Compare a bright component with its local surroundings.
       let sum = 0, cnt = 0;
@@ -246,13 +261,13 @@ function scan() {
     const sx = overlay.width / W, sy = overlay.height / H;
     let found = 0;
     for (const c of top) {
-      const gx = Math.floor(c.cx / 6), gy = Math.floor(c.cy / 6);
+      const gx = Math.floor(c.cx / 10), gy = Math.floor(c.cy / 10);
       const key = gx + ',' + gy;
       newHits[key] = carry(gx, gy) + 1;
       if (newHits[key] >= MIN_FRAMES) {
         found++;
         octx.beginPath();
-        octx.arc(c.cx * sx, c.cy * sy, c.r * sx + 14, 0, Math.PI * 2);
+        octx.arc(c.cx * sx, c.cy * sy, (c.r + 6) * Math.max(sx, sy), 0, Math.PI * 2);
         octx.stroke();
       }
     }
